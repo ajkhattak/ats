@@ -68,6 +68,13 @@ def getSurfaceData(keys, dat, name):
     if len(res.shape) == 2 and res.shape[1] == 1:
         res = res[:,0]
     return res
+def get2DSurfaceData(keys, dat, name):
+    if not len(name.split(".")) == 3:
+        name = name + ".cell.0"
+    res = np.array([dat[name][key][:] for key in keys])
+    if len(res.shape) == 2 and res.shape[1] > 1:
+        res = res[:,:]
+    return res
 
 def subsetFile(directory=".", base="visdump_data.h5", outfile="my_visdump_data.h5", inds=None, interval=1, time_range=None, names=None, dry_run=False):
     """Read one file, write another"""

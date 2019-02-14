@@ -305,7 +305,209 @@ class Mesh2D(object):
         points = np.array([Xc, Yc, Zc])
         return cls(points.transpose(), conn)
     
+    @classmethod
+    def from_2DSurface(cls, x, y, z):
+        """Creates a 2D surface strip mesh from transect data"""
+        # coordinates
+        #y = np.array([0,1])
+        Xc, Yc = np.meshgrid(x, y)
+        Xc = Xc.flatten()
+        Yc = Yc.flatten()
+        #print Xc
+        print 'z.orig: ', z.shape, z
+        Zc = np.concatenate(z) #np.concatenate([z,z])
 
+        print 'Zc.shape: ',Zc.shape, Zc
+        # connectivity
+        nsurf_cells = len(x)-1
+        conn = []
+        nx = nsurf_cells
+        ny= len(y) -1
+        for j in range(ny):
+            for i in range(nsurf_cells):
+                k = j*(nx+1)
+                conn.append([i + k, i+1 + k, nx + i + 2 + k, nx + i + 1 + k])
+
+        points = np.array([Xc, Yc, Zc])
+        return cls(points.transpose(), conn)
+
+    @classmethod
+    def from_Transect_MakePieWedge(cls, x, z, arclen, curved = False):
+        """Creates a 2D surface pie-wedge mesh from transect data"""
+        # coordinates
+        xlen = len(x)
+        if curved is True:
+            xarc0 = (x[0] + x[1])* 0.5
+        else:
+            xarc0 = 0 
+        x0 = x
+        x1 = [i + xarc0 for i in x0]
+
+        y1_head = 0.5*arclen #2.5
+        y1_tail = -0.5*arclen #-2.5
+        slope = (y1_head - y1_tail*0 - 0.00025)/(x1[-1]- x1[0])
+         
+        y0 = [y1_tail + slope*(alpha - x1[0]) for alpha in x1]
+        y1 = [y1_head - slope*(alpha - x1[0]) for alpha in x1]
+        y0 = [np.round(d,4) for d in y0]
+        y1 = [np.round(d,4) for d in y1]
+
+        Xc = np.concatenate((x0, x1))
+        Yc = np.concatenate((y0,y1))
+        Zc = np.concatenate([z,z])
+ 
+        # connectivity
+        nsurf_cells = len(x)-1
+        conn = []
+        for i in range(nsurf_cells):
+            conn.append([i, i+1, nsurf_cells + i + 2, nsurf_cells + i + 1])
+
+        points = np.array([Xc, Yc, Zc])
+        return cls(points.transpose(), conn)
+
+    @classmethod
+    def from_Transect_MakeTwoPieWedges(cls, x, z, arclen):
+        """Creates a 2D surface two pie-wedges mesh from transect data"""
+        # coordinates
+        xlen = len(x)
+        xarc_left = (x[0] + x[1])* 0.5
+        xmid = len(x)/2
+        x0 = x
+        x1 = np.linspace(xarc_left, x[-1], xlen)
+        x1[xmid] = x[xmid]
+
+        y1_head = 0.5*arclen #2.5
+        y1_tail =  -0.5*arclen #-2.5
+        slope = (y1_head - y1_tail*0 - 0.025)/(x1[xmid]- x1[0])
+        y0 = []
+        y1 = []
+        for i, alpha in enumerate(x1):
+            if i < xmid +1:
+                y0.append(y1_tail + slope *(alpha - x1[0]))
+                y1.append(y1_head - slope *(alpha - x1[0]))
+            else:
+                y0.append(y0[xmid] - slope *(alpha - x1[xmid]))
+                y1.append(y1[xmid] + slope *(alpha - x1[xmid]))
+        y0 = [round(i,2) for i in y0]
+        y1 = [round(i,2) for i in y1]
+        print y0
+        print y1
+        Xc = np.concatenate((x0, x1))
+        Yc = np.concatenate((y0,y1))
+        Zc = np.concatenate([z,z])
+
+        # connectivity
+        nsurf_cells = len(x)-1
+        conn = []
+        for i in range(nsurf_cells):
+            conn.append([i, i+1, nsurf_cells + i + 2, nsurf_cells + i + 1])
+
+        points = np.array([Xc, Yc, Zc])
+        return cls(points.transpose(), conn)
+
+    @classmethod
+    def from_Transect_Make3DUp(cls, x, z):
+        """Creates a 3D radially symmetric polygon from transect data
+        Only works for generating ONE 3D polygons
+        """
+        # coordinates
+        xmid = int(len(x)/2)
+        x1 = x[:xmid+1]
+        x2 = x[:xmid]
+        x3 = [x1[-1] + 0*i for i in x1[:-1]]
+        xx4 = x[xmid:]
+        x4 = x[xmid+1:]
+        #print len(x), len(x1), len(x2), len(x3), len(x4)
+        #print 'x4' ,x
+        #print '--------------------- 1:'
+       
+        s1 = ( 0 -5.)/(x1[-1] - x1[0])
+        s2 = (0-5.)/(xx4[-1] - xx4[0])
+        print s1, s2
+        print x1, x2, x3
+        y1 = []
+        y2 = []
+        y5 = []
+        y6 = []
+        for i,a in enumerate(x1):
+            y1.append( -5. - s1 *(a - x1[0]))
+        for i,a in enumerate(x1[:-1]):
+            y2.append( 5. + s1 *(a - x1[0]))
+        for i,a in enumerate(xx4[:-1]):
+            y5.append( -5. - s2 *(a - xx4[0]))
+            y6.append( 5. + s2 *(a - xx4[0]))
+        
+        y3 = np.linspace(10, 0, len(y1))
+        y4 = np.linspace(-10, 0, len(y1))
+        y3 = y3[:-1]
+        y4 = y4[:-1]
+
+        y1 = [round(i,3) for i in y1]
+        y2 = [round(i,3) for i in y2]
+        y3 = [round(i,3) for i in y3]
+        y4 = [round(i,3) for i in y4]
+        y5 = [round(i,3) for i in y5]
+        y6 = [round(i,3) for i in y6]
+            
+        z1 = z[:xmid+1]
+        z2 = z[:xmid]
+        z4 = z[xmid+1:]
+        z4 = z4[::-1]
+        z3 = [(i+j)/2. for i,j in zip(z2,z4)]
+       
+           
+        Xc = np.concatenate((x1, x2, x3,x4[::-1], x4[::-1], x3))
+        Yc = np.concatenate((y1, y2, y3, y2, y1[:-1], y4))
+        Zc = np.concatenate([z1, z2, z3, z2[::-1], z2[::-1], z3])
+ 
+        Xc = np.concatenate((x1, x2, x3,x4[::-1], x4[::-1], x3[::-1]))
+        Yc = np.concatenate((y1, y2, y3, y6, y5, y4))
+        Zc = np.concatenate([z1, z2, z3, z4, z4, z3])
+       
+        pies_left = 6
+    
+        # connectivity
+        nx = len(x1)-1
+        conn = []
+        conn_x = []
+        index0 = []
+        for j in range(pies_left):
+            print j
+            if j == 0:
+                for i in range(nx):
+                    ind = i + (nx+1) * j
+                    if i < nx - 1:
+                        conn.append([ind, ind+1, nx + ind + 2, nx + ind + 1])
+                        index0.append([ind, ind+1])
+                    else:
+                        conn.append([ind, ind+1, nx + ind + 1])
+                        conn_x.append([ind, ind+1, nx + ind + 1])
+                        index0.append([ind, ind+1])
+            elif j >0 and j != 5:
+                c = conn_x[0]
+                index1 = []
+                for i in range(nx):
+                   
+                    if i < nx - 1:
+                        ind = i + (nx) * j
+                        conn.append([ind+1, ind+2, nx+ ind + 2, nx + ind + 1])
+                        index1.append([ind+1+nx, ind+2+nx])
+                    else:
+                        ind = i + (nx) * j
+                        conn.append([ind+1, c[1],  nx + ind + 1])
+                        index1.append([c[1], nx+ind+1])
+            elif j == 5:
+                for i, c in enumerate(index0):
+                    if i < len(index0)-1:
+                        x = [c[0], c[1], index1[i][1], index1[i][0]]
+                    else:
+                        x = [c[0], c[1], index1[i][1]]
+                    x = x[::-1] # this ordering is important for proper connectivity of the last and first segment
+                    conn.append(x)
+                   
+        points = np.array([Xc, Yc, Zc])
+        return cls(points.transpose(), conn)
+    
 class Mesh3D(object):
     def __init__(self, coords, face_to_node_conn, elem_to_face_conn,
                  side_sets=None, labeled_sets=None, material_ids=None):
