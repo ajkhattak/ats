@@ -97,7 +97,7 @@ class PK_BDF_Default : public PK_BDF {
   // virtual void Solution_to_State(TreeVector& soln,
   //                                const Teuchos::RCP<State>& S);
 
-  virtual void set_states(const Teuchos::RCP<const State>& S,
+  virtual void set_states(const Teuchos::RCP<State>& S,
                         const Teuchos::RCP<State>& S_inter,
                         const Teuchos::RCP<State>& S_next);
 
@@ -120,6 +120,7 @@ class PK_BDF_Default : public PK_BDF {
     return AmanziSolvers::FnBaseDefs::CORRECTION_NOT_MODIFIED;
   }
 
+  virtual void ResetTimeStepper(double time);
 
   // experimental approach -- calling this indicates that the time
   // integration scheme is changing the value of the solution in
