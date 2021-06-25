@@ -2,8 +2,8 @@
 //! Overland flow using the diffusion wave equation.
 
 /*
-  ATS is released under the three-clause BSD License. 
-  The terms of use and "as is" disclaimer for this license are 
+  ATS is released under the three-clause BSD License.
+  The terms of use and "as is" disclaimer for this license are
   provided in the top-level COPYRIGHT file.
 
   Authors: Ethan Coon (ecoon@lanl.gov)
@@ -18,58 +18,109 @@ Solves the diffusion wave equation for overland flow with pressure as a primary 
   \frac{\partial \Theta}{\partial t} - \nabla n_l k \nabla h(p) = Q_w
 
 
-Options:
+.. _overland-pressure-spec:
+.. admonition:: overland-pressure-spec
 
-Variable naming:
+    Keys name variables:
 
-* `"domain`" ``[string]`` **"surface"**  Defaults to the extracted surface mesh.
+    * `"domain`" ``[string]`` **"surface"**  Defaults to the extracted surface mesh.
 
-* `"primary variable`" ``[string]`` The primary variable associated with this PK, typically `"DOMAIN-pressure`"
+    * `"primary variable`" ``[string]`` The primary variable associated with
+      this PK, typically `"DOMAIN-pressure`" Note there is no default -- this
+      must be provided by the user.
+
+    * `"boundary conditions`" ``[list]`` Defaults to Neuman, 0 normal flux.
+
+    * `"overland conductivity evaluator`" ``[list]``
+      See `Overland Conductivity Evaluator`_.
+
+    IF
+
+    * `"source term`" ``[bool]`` **false** Is there a source term?
+
+    THEN
+
+    * `"source key`" ``[string]`` **DOMAIN-water_source** Typically
+      not set, as the default is good. ``[m s^-1]`` or ``[mol s^-1]``
+    * `"water source in meters`" ``[bool]`` **true** Is the source term in ``[m s^-1]``?
+    * `"source term is differentiable`" ``[bool]`` **true** Can the source term
+      be differentiated with respect to the primary variable?
+    * `"explicit source term`" ``[bool]`` **false** Apply the source term from
+      the previous time step.
+
+    END
+
+    Math and solver algorithm options:
+
+    * `"diffusion`" ``[pde-diffusion-spec]`` The (forward) diffusion operator,
+      see PDE_Diffusion_.
+
+    * `"diffusion preconditioner`" ``[pde-diffusion-spec]`` **optional** The
+      inverse of the diffusion operator.  See PDE_Diffusion_.  Typically this
+      is only needed to set Jacobian options, as all others probably should
+      match those in `"diffusion`", and default to those values.
+
+    * `"absolute error tolerance`" ``[double]`` **550.** Defaults to 1 cm of
+      water.  A small, but significant, amount of water.
+
+    * `"limit correction to pressure change [Pa]`" ``[double]`` **-1** If > 0,
+      this limits an iterate's max pressure change to this value.  Not usually
+      helpful.
+
+    * `"limit correction to pressure change when crossing atmospheric [Pa]`" ``[double]``
+      **-1** If > 0, this limits an iterate's max pressure change
+      to this value when they cross atmospheric pressure.  Not usually helpful.
+
+    * `"allow no negative ponded depths`" ``[bool]`` **false** Modifies all
+      correction updates to ensure only positive ponded depth is allowed.
+
+    * `"min ponded depth for velocity calculation`" ``[double]`` **1.e-2** For
+      ponded depth below this height, declare the velocity 0.
+
+    * `"min ponded depth for tidal bc`" ``[double]`` **0.02** Control on the
+      tidal boundary condition.  TODO: This should live in the BC spec?
+
+    INCLUDES:
+
+    - ``[pk-physical-bdf-default-spec]`` A `PK: Physical and BDF`_ spec.
+
+    Everything below this point is usually not provided by the user, but are
+    documented here for completeness.
+
+    Keys name variables:
+
+    * `"conserved quantity key`" ``[string]`` **DOMAIN-water_content** Typically
+      not set, as the default is good. ``[mol]``
+    * `"elevation key`" ``[string]`` **DOMAIN-elevation** Typically
+      not set, as the default is good. ``[mol]``
+    * `"slope magnitude key`" ``[string]`` **DOMAIN-slope_magnitude** Typically
+      not set, as the default is good. ``[mol]``
+
+    Algorithmic parameters:
+
+    * `"coupled to subsurface via flux`" ``[bool]`` **false** Set by MPC.
+    * `"coupled to subsurface via head`" ``[bool]`` **false** Set by MPC.
+
+    * `"accumulation preconditioner`" ``[pde-accumulation-spec]`` **optional**
+      The inverse of the accumulation operator.  See PDE_Accumulation_.
+      Typically not provided by users, as defaults are correct.
+
+    EVALUATORS:
+
+    - `"conserved quantity`"
+    - `"water content`"
+    - `"cell volume`"
+    - `"surface_subsurface_flux`"
+    - `"elevation`"
+    - `"slope magnitude`"
+    - `"overland_conductivity`"
+    - `"ponded_depth`"
+    - `"pres_elev`"
+    - `"source`"
 
 
-Other variable names, typically not set as the default is basically always good:
-
-* `"conserved quantity key`" ``[string]`` **"DOMAIN-water_content"** The conserved quantity name.
-
-Discretization control:
-
-* `"diffusion`" ``[list]`` An PDE_Diffusion_ spec describing the (forward) diffusion operator
-
-* `"diffusion preconditioner`" ``[list]`` An PDE_Diffusion_ spec describing the diffusive parts of the preconditioner.
-
-Time integration and timestep control:
-
-* `"initial time step`" ``[double]`` **1.** Max initial time step size ``[s]``.
-
-* `"time integrator`" ``[implicit-time-integrator-typed-spec]`` **optional** is a TimeIntegrator_ spec.
-  Note that this is only used if this PK is not strongly coupled to other PKs.
-
-* `"linear solver`" ``[linear-solver-typed-spec]`` **optional** is a LinearSolver_ spec.  Note
-  that this is only used if this PK is not strongly coupled to other PKs.
-
-* `"preconditioner`" ``[preconditioner-typed-spec]`` **optional** is a Preconditioner_ spec.
-  Note that this is only used if this PK is not strongly coupled to other PKs.
-
-* `"initial condition`" ``[initial-conditions-spec]`` See InitialConditions_.
-
-Error control:
-
-* `"absolute error tolerance`" ``[double]`` **550.** Defaults to 1 cm of water.  A small, but significant, amount of water.
-
-* `"relative error tolerance`" ``[double]`` **1** Take the error relative to the amount of water present in that cell.
-
-* `"flux tolerance`" ``[double]`` **1** Multiplies the error in flux (on a face)
-  relative to the min of water in the neighboring cells.  Typically only
-  changed if infiltration is very small and the boundary condition is not
-  converging, at which point it can be decreased by an order of magnitude at a
-  time until the boundary condition is satisfied.
-
-Boundary conditions:
-
-xx* `"boundary conditions`" ``[surface-flow-bc-spec]`` Defaults to Neuman, 0 normal flux.
-
-
-May inherit options from PKPhysicalBDFBase_.
+.. todo:
+    Nearly all variable name roots are hard-coded here, this should get updated.
 
 */
 
@@ -108,7 +159,7 @@ public:
                        const Teuchos::RCP<Teuchos::ParameterList>& global_list,
                        const Teuchos::RCP<State>& S,
                        const Teuchos::RCP<TreeVector>& solution);
-  
+
   // Virtual destructor
   virtual ~OverlandPressureFlow() {}
 
@@ -143,10 +194,6 @@ public:
 
   // evaluating consistent faces for given BCs and cell values
   virtual void CalculateConsistentFaces(const Teuchos::Ptr<CompositeVector>& u);
-  
-  // -- Compute a norm on u-du and return the result.
-  virtual double ErrorNorm(Teuchos::RCP<const TreeVector> u,
-                           Teuchos::RCP<const TreeVector> du);
 
   // -- Possibly modify the correction before it is applied
   virtual AmanziSolvers::FnBaseDefs::ModifyCorrectionResult
@@ -195,20 +242,39 @@ protected:
     UPDATE_FLUX_NEVER = 3
   };
 
+  // keys
+  Key potential_key_;
+  Key flux_key_;
+  Key flux_dir_key_;
+  Key velocity_key_;
+  Key elev_key_;
+  Key pd_key_;
+  Key pd_bar_key_;
+  Key wc_bar_key_;
+  Key cond_key_;
+  Key uw_cond_key_;
+  Key dcond_key_;
+  Key duw_cond_key_;
+  Key mass_dens_key_;
+  Key molar_dens_key_;
+  Key cv_key_;
+  Key source_key_;
+  Key source_molar_dens_key_;
+  Key ss_flux_key_;
+
   // control switches
   bool standalone_mode_; // domain mesh == surface mesh
   FluxUpdateMode update_flux_;
   Operators::UpwindMethod upwind_method_;
 
   bool is_source_term_;
-  Key source_key_;
   bool source_in_meters_;
   bool source_only_if_unfrozen_;
-  
+
   bool modify_predictor_with_consistent_faces_;
   bool symmetric_;
   bool perm_update_required_;
-  
+
   double p_limit_;
   double patm_limit_;
   bool patm_hard_limit_;
@@ -223,7 +289,9 @@ protected:
   int iter_;
   double iter_counter_time_;
   int jacobian_lag_;
-  
+
+  // evaluator for flux, which is needed by other pks
+  Teuchos::RCP<PrimaryVariableFieldEvaluator> flux_pvfe_;
 
   // work data space
   Teuchos::RCP<Operators::Upwinding> upwinding_;
@@ -235,9 +303,9 @@ protected:
   Teuchos::RCP<Operators::PDE_Diffusion> face_matrix_diff_;
   Teuchos::RCP<Operators::PDE_Diffusion> preconditioner_diff_;
   Teuchos::RCP<Operators::PDE_Accumulation> preconditioner_acc_;
-  Teuchos::RCP<Operators::Operator> lin_solver_;
 
   bool precon_used_;
+  bool precon_scaled_;
 
   // boundary condition data
   Teuchos::RCP<Functions::BoundaryFunction> bc_zero_gradient_;
@@ -250,7 +318,8 @@ protected:
   Teuchos::RCP<Functions::BoundaryFunction> bc_level_;
   Teuchos::RCP<Functions::BoundaryFunction> bc_tidal_;
   Teuchos::RCP<Functions::DynamicBoundaryFunction> bc_dynamic_;
-  
+  Teuchos::RCP<Functions::BoundaryFunction> bc_level_flux_lvl_, bc_level_flux_vel_ ;
+
   // needed physical models
   Teuchos::RCP<Flow::OverlandConductivityModel> cond_model_;
 

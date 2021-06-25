@@ -9,8 +9,19 @@ BUILDDIR      = build
 
 .PHONY: all sphinx_help worktree html pdf input_spec deploy clean
 
-all: html
+all: input_spec html
 
+help:
+	@echo "Builds ATS documentation and user guide"
+	@echo "---------------------------------------"
+	@echo "To build ATS documentation from scratch (new repo setup, do this once):"
+	@echo "  > make worktree"
+	@echo ""
+	@echo "To build input spec/user guide:"
+	@echo "  > make"
+	@echo ""
+	@echo "To deploy to github:"
+	@echo "  > make deploy"
 
 sphinx_help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
@@ -25,9 +36,9 @@ pdf:
 	@$(SPHINXBUILD) -M pdf "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
 input_spec:
-	$(MAKE) -C source/input_spec
+	$(MAKE) -C source/input_spec clean rst
 
-deploy: all
+deploy:
 	cd build/html && \
 	git add --all && \
 	git commit -m "Deployment to gh-pages" && \

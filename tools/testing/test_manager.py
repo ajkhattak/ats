@@ -32,7 +32,9 @@ import traceback
 import distutils.spawn
 import numpy
 import collections
-import h5py
+import configparser
+
+
 
 aliases = dict()
 
@@ -68,12 +70,6 @@ def version(executable):
 class NoCatchException(Exception):
     def __init__(self,*args,**kwargs):
         Exception.__init__(self,*args,**kwargs)
-
-if sys.version_info[0] == 2:
-    from ConfigParser import SafeConfigParser as config_parser
-else:
-    from configparser import ConfigParser as config_parser
-
 
 class TestStatus(object):
     """
@@ -138,6 +134,15 @@ class RegressionTest(object):
         self._num_failed = 0
         self._test_name = None
 
+        # docker goodies
+        self._docker_executable = "docker"
+        self._docker_container_mnt = "/home/amanzi_usr/work"
+        self._docker_container_pwd = "/home/amanzi_usr/work"
+        self._docker_host_mnt = "."
+        self._docker_mpiexec = "mpirun"
+        self._docker_image = executable
+        self._docker_ats_executable="ats"
+
         # assign default tolerances for different classes of variables
         # absolute min and max thresholds for determining whether to
         # compare to baseline, i.e. if (min_threshold <= abs(value) <=
@@ -167,11 +172,10 @@ class RegressionTest(object):
         message += "        exec  : {0}\n".format(self._executable)
         message += "        input : {0}../{1}.{2}\n".format(
             self._input_arg,self._test_name,self._input_suffix)
-        for domain,criteria in self._criteria.iteritems():
+        for domain,criteria in self._criteria.items():
             message += "    test criteria on \"{0}\" :\n".format(domain)
-            for key,tol in criteria.iteritems():
-                message += "        {0} : {1} [{2}] : {3} <= abs(value) <= {4}\n".format(
-                    key, tol[0], tol[1], tol[2], tol[3])
+            for tol in criteria:
+                message += "        {}".format(tol)
         return message
 
     def setup(self, cfg_criteria, test_data, timeout, check_performance, testlog):
@@ -225,11 +229,21 @@ class RegressionTest(object):
         return self.name() + suffix        
 
     def filenames(self, dirname):
+        # filenames in the standard form, e.g. 0X_suite/test.regression/checkpoint00000.h5
         fname_list = sorted(glob.glob(os.path.join(dirname, self._file_prefix+"*"+self._file_suffix)))
         final_name = os.path.join(dirname, 'checkpoint_final.h5')
         if final_name in fname_list:
             fname_list.remove(final_name)
-        return fname_list
+
+        # filenames in the new-style directory based form, e.g.
+        #   0X_suite/test.regression/checkpoint00000/domain.h5
+        fname_list2_tmp = sorted(glob.glob(os.path.join(dirname, self._file_prefix+"*", "*"+self._file_suffix)))
+        fname_list2 = [f for f in fname_list2_tmp if 'checkpoint_final' not in f]
+
+        all_fnames = fname_list + fname_list2
+        #print(f'Files in {dirname}: {len(all_fnames)}')
+        #print(all_fnames)
+        return all_fnames
 
     def run(self, dry_run, status, testlog):
         """
@@ -251,42 +265,67 @@ class RegressionTest(object):
           to catch hanging jobs, but for python < 3.3 we have to
           manually manage the timeout...?
         """
+
         command = []
-        if self._np is not None:
-            if self._mpiexec:
-                command.append(self._mpiexec)
-                command.append("-np")
-                command.append(self._np)
-            else:
-                # parallel test, but don't have mpiexec, we mark the
-                # test as skipped and bail....
-                message = self._txtwrap.fill(
-                    "WARNING : mpiexec was not provided for a parallel test '{0}'.\n"
-                    "This test was skipped!".format(self.name()))
-                print(message, file=testlog)
-                status.skipped = 1
-                return None
+        if "metsi/ats" in self._executable:
+            command.append("docker run --rm")
+        else:
+            if self._np is not None:
+                if self._mpiexec:
+                    command.append(self._mpiexec)
+                    command.append("-np")
+                    command.append(self._np)
+                else:
+                    # parallel test, but don't have mpiexec, we mark the
+                    # test as skipped and bail....
+                    message = self._txtwrap.fill(
+                        "WARNING : mpiexec was not provided for a parallel test '{0}'.\n"
+                        "This test was skipped!".format(self.name()))
+                    print(message, file=testlog)
+                    status.skipped = 1
+                    return None
 
-        command.append(self._executable)
-        command.append("{0}../{1}.{2}".format(self._input_arg,test_name,self._input_suffix))
-
+        # Setting CWD for current test
         test_directory = os.getcwd()
         run_directory = os.path.join(test_directory, self.dirname())
         os.mkdir(run_directory)
         os.chdir(run_directory)
         with open('ats_version.txt', 'w') as fid:
             fid.write(self._version)
-        
+
+        if "metsi/ats" in self._executable:
+            command.append("-v " + test_directory + ":/home/amanzi_usr/work:delegated")
+            command.append("-w " + "/home/amanzi_usr/work")
+            command.append(self._executable)
+            command.append("/bin/sh -c 'cd " + self.dirname() + ";")
+            if self._np is not None:
+                command.append(self._docker_mpiexec + " -n " + self._np + " ats")
+            else:
+                command.append("ats")
+            command.append("{0}../{1}.{2}".format(self._input_arg,test_name,self._input_suffix))
+            command.append("'")
+            #print(" ".join(command))
+        else:
+            command.append(self._executable)
+            command.append("{0}../{1}.{2}".format(self._input_arg,test_name,self._input_suffix))
+
         print("    cd {0}".format(run_directory), file=testlog)
         print("    {0}".format(" ".join(command)), file=testlog)
 
         if not dry_run:
             run_stdout = open(test_name + ".stdout", 'w')
             start = time.time()
-            proc = subprocess.Popen(command,
-                                    shell=False,
-                                    stdout=run_stdout,
-                                    stderr=run_stdout)
+            if "metsi/ats" in self._executable:
+                proc = subprocess.Popen(" ".join(command),
+                                        shell=True,
+                                        stdout=run_stdout,
+                                        stderr=run_stdout)
+            else:
+                proc = subprocess.Popen(command,
+                                        shell=False,
+                                        stdout=run_stdout,
+                                        stderr=run_stdout)
+
             while proc.poll() is None:
                 time.sleep(0.1)
                 if time.time() - start > self._timeout:
@@ -473,6 +512,7 @@ class RegressionTest(object):
                 if not os.path.isdir('data'):
                     os.mkdir('data')
 
+                import h5py
                 with h5py.File(os.path.join('data', "{0}_dts.h5".format(self.name())), 'w') as fid:
                     fid.create_dataset("timesteps", data=86400.*good[:,2]) # note conversion from days back to seconds
                 print("Wrote file: data/{0}_dts.h5".format(self.name()), file=testlog)
@@ -485,24 +525,40 @@ class RegressionTest(object):
 
                 # -- checkpoint by list of cycles
                 filenames = self.filenames(gold_dir)
-                chp_cycles = [int(os.path.split(f)[-1][10:-3]) for f in filenames]
+                chp_cycles = set()
+                for f in filenames:
+                    chp_loc = f.find('checkpoint')
+                    digits = f[chp_loc+len('checkpoint'):chp_loc+len('checkpoint')+5]
+                    chp_cycles.add(int(digits))
+                chp_cycles = list(sorted(chp_cycles))
                 try:
-                    chp = asearch.getElementByNamePath(xml, "checkpoint")
+                    chp = asearch.child_by_name(xml, "checkpoint")
+                except aerrors.MissingXMLError:
+                    raise ValueError("Regression tests are done by checkpointing -- please make sure all tests have at least one checkpoint")
+
+                # empty the checkpoint list
+                for i in range(len(chp)):
+                    chp.pop(chp[0].get('name'))
+
+                # remove the vis list and coordinator "required times" lists which can affect timestepping
+                try:
+                    xml.pop("visualization")
                 except aerrors.MissingXMLError:
                     pass
-                else:
-                    # empty the checkpoint list
-                    for i in range(len(chp)):
-                        chp.pop(chp[0].get('name'))
+                coord = asearch.find_name(xml, "cycle driver")
+                try:
+                    coord.pop("required times")
+                except aerrors.MissingXMLError:
+                    pass
 
-                    chp.setParameter('cycles', 'Array(int)', chp_cycles)
+                chp.setParameter('cycles', 'Array(int)', chp_cycles)
 
                 # -- update timestep controller, nonlinear solvers
-                for ti in asearch.generateElementByNamePath(xml, "time integrator"):
-                    asearch.generateElementByNamePath(ti, "limit iterations").next().setValue(100)
-                    asearch.generateElementByNamePath(ti, "diverged tolerance").next().setValue(1.e10)
+                for ti in asearch.findall_name(xml, "time integrator"):
+                    asearch.find_name(ti, "limit iterations").setValue(100)
+                    asearch.find_name(ti, "diverged tolerance").setValue(1.e10)
 
-                    asearch.getElementByNamePath(ti, "timestep controller type").setValue("from file")
+                    asearch.find_name(ti, "timestep controller type").setValue("from file")
                     ts_hist = ti.sublist("timestep controller from file parameters")
                     ts_hist.setParameter("file name", "string", "../data/{0}_dts.h5".format(self.name()))
 
@@ -510,18 +566,9 @@ class RegressionTest(object):
                 print("Writing: {0}.xml".format(self.name()), file=testlog)
                 aio.toFile(xml, '{0}.xml'.format(self.name()))
 
-                # clean the gold directory
-                filenames.append(os.path.join(gold_dir, 'ats_version.txt'))
-                # for f in os.listdir(gold_dir):
-                #     if not os.path.join(gold_dir, f) in filenames:
-                #         os.remove(os.path.join(gold_dir, f))
-
-                # git add stuff
-                filenames.append('{}_orig.xml'.format(self.name()))
-                filenames.append('{}.xml'.format(self.name()))
-                filenames.append(os.path.join('data','{}_dts.h5'.format(self.name())))
-                msg = subprocess.check_output(['git', 'add', '-f',]+filenames)
-                print(msg, file=testlog)
+                # -- run update to get a new run on the dt history
+                self.run(False, status, testlog)
+                self.update(status, testlog)
 
         print("done", file=testlog)
 
@@ -534,6 +581,8 @@ class RegressionTest(object):
         We return zero on success, one on failure so that the test
         manager can track how many tests succeeded and failed.
         """
+        import h5py
+
         if self._skip_check_gold:
             message = "    Skipping comparison to regression gold file (only test if model runs to completion)."
             print("".join(['\n', message, '\n']), file=testlog)
@@ -548,7 +597,7 @@ class RegressionTest(object):
         reg_files = self.filenames(reg_dirname)
 
         # check that at least one gold file exists
-        if len(gold_files) is 0:
+        if len(gold_files) == 0:
             message = self._txtwrap.fill(
                 "FAIL: could not find checkpoint files in regression "
                 "test gold directory "
@@ -569,21 +618,26 @@ class RegressionTest(object):
 
         for gold_file, reg_file in zip(gold_files, reg_files):
             try:
-                h5_reg = h5py.File(reg_file)
+                h5_reg = h5py.File(reg_file,'r')
             except Exception as e:
                 print("    FAIL: Could not open file: '{0}'".format(reg_file), file=testlog)
                 status.fail = 1
                 h5_reg = None
 
             try:
-                h5_gold = h5py.File(gold_file)
+                h5_gold = h5py.File(gold_file,'r')
             except Exception as e:
                 print("    FAIL: Could not open file: '{0}'".format(gold_file), file=testlog)
                 status.fail = 1
                 h5_gold = None
 
             if h5_reg is not None and h5_gold is not None:
+                status.local_fail = 0
                 self._compare(h5_reg, h5_gold, status, testlog)
+                if status.local_fail == 0:
+                    print("    Passed tests {}".format(os.path.split(gold_file)[-1]), file=testlog)
+                else:
+                    print("    Failed test {}".format(os.path.split(gold_file)[-1]), file=testlog)
 
             if h5_reg is not None: h5_reg.close()
             if h5_gold is not None: h5_gold.close()
@@ -593,7 +647,7 @@ class RegressionTest(object):
         """Check that output hdf5 file has not changed from the baseline.
         """
         for key, tolerance in self._criteria.items():
-            if key == self._TIME:
+            if key == self._TIME and 'time' in h5_gold.attrs:
                 self._check_tolerance(h5_current.attrs['time'], h5_gold.attrs['time'],
                                       self._TIME, tolerance, status, testlog)
 
@@ -643,9 +697,6 @@ class RegressionTest(object):
                 for (g, r) in zip(gold_matches, reg_matches):
                     self._check_tolerance(h5_current[r][:], h5_gold[g][:], r, tolerance, status, testlog)
 
-        if status.fail == 0:
-            print("    Passed tests.", file=testlog)
-
     def _norm(self, diff):
         """
         Determine the difference between two values
@@ -670,22 +721,13 @@ class RegressionTest(object):
 
         elif (tol_type == self._RELATIVE or
               tol_type == self._PERCENT):
-
             if type(gold) is numpy.ndarray:
-                rel_to = numpy.where(gold > self._eps, gold, current)
-                filter = numpy.where(rel_to > self._eps)[0]            
-                if filter.shape[0] == 0:
-                    delta = 0
-                else:
-                    delta = self._norm((gold[filter] - current[filter]) / rel_to[filter])
+                min_threshold = max(min_threshold, 1.e-12)
+                rel_to = numpy.where(numpy.abs(gold) > min_threshold, gold, min_threshold)
+                delta = self._norm((gold - current) / rel_to)
 
             else:
-                if gold > self._eps:
-                    delta = self._norm((gold - current) / gold)
-                elif current > self._eps:
-                    delta = self._norm((gold - current) / current)
-                else:
-                    delta = 0
+                delta = self._norm((gold - current) / max(abs(gold), min_threshold))
                 
             if tol_type == self._PERCENT:
                 delta *= 100.0
@@ -697,6 +739,7 @@ class RegressionTest(object):
 
         if delta > tol:
             status.fail = 1
+            status.local_fail = 1
             print("    FAIL: {0} : {1} : {2} > {3} [{4}]".format(
                     self.name(), key, delta, tol, tol_type), file=testlog)
         else:
@@ -736,7 +779,7 @@ class RegressionTest(object):
         * key = default
         * key = no
         * key = tolerance type
-        * key = tolerance type [, min_threshold value] [, max_threshold value]
+        * key = tolerance type [ min_threshold value [ max_threshold value ] ]
 
         where the first two use defaults, the third turns the test
         off, and the last two specify the tolerance explicitly, where
@@ -752,19 +795,21 @@ class RegressionTest(object):
             return self._default_tolerance[self._DISCRETE]
 
         # if we get here, parse the string
-        criteria = 4*[None]
-        test_data = test_data.split(",")
-        test_criteria = test_data[0]
-        value = test_criteria.split()[0]
+        criteria = [None, None, 0.0, sys.float_info.max]
+        test_data_s = test_data.split()
 
-        try:
-            value = float(value)
-        except Exception:
+        if len(test_data_s) < 2:
             raise RuntimeError("ERROR : Could not convert '{0}' test criteria "
-                               "value '{1}' into a float!".format(key, value))
+                               "'{1}' into at least a tolerance and type!".format(key, test_data))
+        
+        try:
+            value = float(test_data_s[0])
+        except ValueError:
+            raise RuntimeError("ERROR : Could not convert '{0}' test criteria "
+                               "value '{1}' into a float!".format(key, test_data_s[0]))
         criteria[0] = value
 
-        criteria_type = test_criteria.split()[1]
+        criteria_type = test_data_s[1]
         if (criteria_type.lower() != self._PERCENT and
             criteria_type.lower() != self._ABSOLUTE and
                 criteria_type.lower() != self._RELATIVE):
@@ -772,25 +817,22 @@ class RegressionTest(object):
                                "for '{1}'".format(criteria_type, key))
         criteria[1] = criteria_type
 
-        thresholds = {}
-        for t in range(1, len(test_data)):
-            name = test_data[t].split()[0].strip()
-            value = test_data[t].split()[1].strip()
+        if (len(test_data_s) > 2):
             try:
-                value = float(value)
-            except Exception:
-                raise RuntimeError(
-                    "ERROR : Could not convert '{0}' test threshold '{1}'"
-                    "value '{2}' into a float!".format(key, name, value))
-            thresholds[name] = value
-        value = thresholds.pop("min_threshold", None)
-        criteria[2] = value
-        value = thresholds.pop("max_threshold", None)
-        criteria[3] = value
-        if len(thresholds) > 0:
-            raise RuntimeError("ERROR: test {0} : unknown criteria threshold: {1}",
-                               key, thresholds)
-        
+                min_threshold = float(test_data_s[2])
+            except ValueError:
+                raise RuntimeError("ERROR : Could not convert '{0}' test criteria "
+                                   "min_threshold value '{1}' into a float!".format(key, test_data_s[2]))
+            criteria[2] = min_threshold
+
+        if (len(test_data_s) > 3):
+            try:
+                max_threshold = float(test_data_s[3])
+            except ValueError:
+                raise RuntimeError("ERROR : Could not convert '{0}' test criteria "
+                                   "max_threshold value '{1}' into a float!".format(key, test_data_s[3]))
+            criteria[3] = max_threshold
+
         return criteria
 
 
@@ -1082,12 +1124,10 @@ class RegressionTestManager(object):
         return self._file_status
 
     def display_available_tests(self):
-        print("Available tests: ")
         for test in sorted(self._available_tests.keys()):
-            print("    {0}".format(test))
+            print("{0} {1}".format(os.path.split(os.getcwd())[-1], test))
 
     def display_available_suites(self):
-        print("Available test suites: ")
         for suite in self._available_suites:
             print("    {0} :".format(suite))
             for test in self._available_suites[suite].split():
@@ -1105,7 +1145,7 @@ class RegressionTestManager(object):
         if config_file is None:
             raise RuntimeError("Error, must provide a config filename")
         self._config_filename = config_file
-        config = config_parser()
+        config = configparser.ConfigParser(delimiters=['=',])
         config.read(self._config_filename)
 
         if config.has_section("default-test-criteria"):
@@ -1317,6 +1357,40 @@ def check_options(options):
                                "regression files at the same time.")
 
 
+def check_for_docker_image(docker_image):
+    """
+    Try to verify that we have something reasonable for the executable
+    """
+
+    # Check if we have docker installed
+    docker_full_path=shutil.which("docker")
+    if (docker_full_path is None):
+        raise RuntimeError("ERROR: Docker is not installed in your current PATH.")
+
+    # Check if docker runs
+    output=subprocess.check_output(docker_full_path +" --version ", shell=True, text=True)
+    if ("Docker version" not in output):
+        raise RuntimeError("ERROR: Docker did not run correctly. \n" + output)
+    # could print version of docker
+
+    # Check that we can run ATS from docker
+    pwd = os.path.abspath(os.getcwd())
+    command=[]
+    command.append("docker run --rm")
+    command.append("-v"+pwd+":/home/amanzi_usr/work:delegated")
+    command.append(docker_image)
+    command.append("ats --print_version")
+    print(" ".join(command))
+
+    output=subprocess.run(" ".join(command), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if ("ATS Version" not in output.stdout):
+        raise RuntimeError("ERROR: ATS did not run correctly in Docker. \n")
+    else:
+        print(output.stdout)
+    # could print version of ATS being run
+
+    return docker_image
+        
 def check_for_executable(options, testlog):
     """
     Try to verify that we have something reasonable for the executable
@@ -1334,11 +1408,14 @@ def check_for_executable(options, testlog):
 
     else:
         # absolute path to the executable
-        executable = os.path.abspath(options.executable[0])
-        # is it a valid file?
-        if not os.path.isfile(executable):
-            raise RuntimeError("ERROR: executable is not a valid file: "
-                               "'{0}'".format(executable))
+        if ( "metsi/ats" in options.executable[0] ):
+            executable=check_for_docker_image(options.executable[0])
+        else:
+            executable = os.path.abspath(options.executable[0])
+            # is it a valid file?
+            if not os.path.isfile(executable):
+                raise RuntimeError("ERROR: executable is not a valid file: "
+                                   "'{0}'".format(executable))
 
     if executable is None:
         message = ("\n** WARNING ** : ATS executable was not provided on the command line\n"
@@ -1359,27 +1436,22 @@ def check_for_executable(options, testlog):
 def check_for_mpiexec(options, testlog):
     """
     Try to verify that we have something reasonable for the mpiexec executable
-
-    Notes:
-
-    geh: need to add code to determine full path of mpiexec if not specified
-
-    bja: the problem is that we don't know how to get the correct
-    mpiexec. On the mac, there is a system mpiexe that shows up in the
-    path, but this is provided by apple and it is not the correct one
-    to use because it doesn't include a fortran compiler. We need the
-    exact mpiexec/mpirun that was used to compile petsc, which may
-    come from a system installed package in /usr/bin or /opt/local/bin
-    or maybe petsc compiled it. This is best handled outside the test
-    manager, e.g. use make to identify mpiexec from the petsc
-    variables
     """
 
     # check for mpiexec
     mpiexec = None
-    if options.mpiexec is not None:
+    if options.mpiexec is None:
+        # try to detect from env
+        try:
+            mpiexec = distutils.spawn.find_executable("mpiexec")
+        except IOError:
+            mpiexec = None
+    else:
         # mpiexec = os.path.abspath(options.mpiexec[0])
         mpiexec = options.mpiexec[0]
+
+    if mpiexec is not None:
+        # check that we can use it
         # try to log some info about mpiexec
         print("MPI information :", file=testlog)
         print("-----------------", file=testlog)
@@ -1492,15 +1564,19 @@ def append_command_to_log(command, testlog, tempfile):
         shutil.copyfileobj(tempinfo, testlog)
     os.remove(tempfile)    
 
-def setup_testlog(txtwrap):
+def setup_testlog(txtwrap, silence=False):
     """
     Create the test log and try to add some useful information about
     the environment.
     """
     now = datetime.datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
+    if not os.path.isdir("LOGS"):
+        os.mkdir("LOGS")
     filename = os.path.join("LOGS", "ats-tests-{0}.testlog".format(now))
+
+    if not silence:
+        print("  Test log file : {0}".format(filename))
     testlog = open(filename, 'w')
-    print("  Test log file : {0}".format(filename))
 
     print("ATS Regression Test Log", file=testlog)
     print("Date : {0}".format(now), file=testlog)

@@ -25,13 +25,13 @@ This is the permafrost analog, so deals with energy as well in a similar
 strategy.  In this case advection and diffusion of energy are handled in the
 first solve:
 
-(dE_s / dt)^* = div (  Kappa_s grad T + hq )
+(dE_s / dt)^* = div (  kappa_s grad T + hq )
 
 then:
 
 dE_s / dt = (dE_s / dt)^* + QE_ext + h * Q_ext + qE_ss + h * q_ss
-dE / dt = div (  Kappa grad T) + hq )
-Kappa grad T |_s = qE_ss
+dE / dt = div (  kappa grad T) + hq )
+kappa grad T |_s = qE_ss
 
 
 ------------------------------------------------------------------------- */
@@ -58,21 +58,21 @@ class MPCPermafrostSplitFluxColumnsSubcycled : public MPCPermafrostSplitFluxColu
   // Virtual destructor
   virtual ~MPCPermafrostSplitFluxColumnsSubcycled() = default;
 
-  // PK methods
-  // -- dt is the minimum of the sub pks
-  virtual double get_dt() {
-    return sub_pks_[0]->get_dt();
-  }    
-
+  virtual double get_dt() override;
   // -- advance each sub pk dt.
-  virtual bool AdvanceStep(double t_old, double t_new, bool reinit);
+  virtual bool AdvanceStep(double t_old, double t_new, bool reinit) override;
 
-  virtual bool ValidStep();
-  
+  virtual bool ValidStep() override;
+
   virtual void CommitStep(double t_old, double t_new,
-                          const Teuchos::RCP<State>& S);
-  
- private:
+                          const Teuchos::RCP<State>& S) override;
+
+ protected:
+  std::string subcycled_timestep_type_;
+  double subcycled_target_time_;
+  bool surface_star_subcycling_;
+
+private:
   // factory registration
   static RegisteredPKFactory<MPCPermafrostSplitFluxColumnsSubcycled> reg_;
 

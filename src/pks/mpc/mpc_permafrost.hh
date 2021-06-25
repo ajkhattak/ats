@@ -1,5 +1,41 @@
-// Rewrite of permafrost PK, new operators, based on mpc_subsurface
-//
+/*
+  ATS is released under the three-clause BSD License. 
+  The terms of use and "as is" disclaimer for this license are 
+  provided in the top-level COPYRIGHT file.
+
+  Authors: Ethan Coon (ecoon@lanl.gov)
+*/
+//! A coupler which solves flow and energy both surface and subsurface.
+
+
+/*!
+
+This MPC handles the coupling of surface energy and flow to subsurface energy
+and flow for integrated hydrology with freeze/thaw processes.
+
+.. _mpc-permafrost-spec:
+.. admonition:: mpc-permafrost-spec
+
+   * `"PKs order`" ``[Array(string)]`` The user supplies the names of the
+     coupled PKs.  The order must be {subsurface_flow_pk, subsurface_energy_pk,
+     surface_flow_pk, surface_energy_pk}.
+
+   * `"subsurface domain name`" ``[string]`` **domain** 
+
+   * `"surface domain name`" ``[string]`` **surface** 
+
+   * `"mass exchange flux key`" ``[string]`` **SURFACE_DOMAIN-surface_subsurface_flux**
+
+   * `"energy exchange flux key`" ``[string]`` **SURFACE_DOMAIN-surface_subsurface_energy_flux**
+
+   * `"water delegate`" ``[mpc-delegate-water-spec]`` A `Coupled Water
+     Globalization Delegate`_ spec.
+
+   INCLUDES:
+
+   - ``[mpc-subsurface-spec]`` *Is a* `Subsurface MPC`_
+    
+ */
 
 #ifndef PKS_MPC_PERMAFROST_FOUR_HH_
 #define PKS_MPC_PERMAFROST_FOUR_HH_
@@ -25,6 +61,7 @@ class MPCPermafrost : public MPCSubsurface {
   virtual void set_states(const Teuchos::RCP<State>& S,
                           const Teuchos::RCP<State>& S_inter,
                           const Teuchos::RCP<State>& S_next);
+  virtual void CommitStep(double t_old, double t_new, const Teuchos::RCP<State>& S);
 
   // -- computes the non-linear functional g = g(t,u,udot)
   //    By default this just calls each sub pk FunctionalResidual().
@@ -65,13 +102,28 @@ class MPCPermafrost : public MPCSubsurface {
   Key energy_exchange_key_;
   Teuchos::RCP<PrimaryVariableFieldEvaluator> mass_exchange_pvfe_;
   Teuchos::RCP<PrimaryVariableFieldEvaluator> energy_exchange_pvfe_;
-  
-  // off-diagonal terms
-  Teuchos::RCP<Operators::PDE_Accumulation> dE_dp_surf_;
 
-  
+  // off-diagonal terms
+  // -- d ( dE/dt ) / dp terms
+  Teuchos::RCP<Operators::PDE_Accumulation> dE_dp_surf_;
+  // -- d ( div q ) / dT  terms
+  Teuchos::RCP<Operators::PDE_Diffusion> ddivq_dT_;
+
+  Key surf_temp_key_;
+  Key surf_pres_key_;
+  Key surf_e_key_;
+  Key surf_wc_key_;
+  Key surf_tc_key_;
+  Key surf_kr_key_;
+  Key surf_kr_uw_key_;
+  Key surf_potential_key_;
+  Key surf_pd_bar_key_;
+  Key surf_enth_key_;
+  Key surf_mass_flux_key_;
+  Key surf_rho_key_;
+
   // EWC delegate for the surface
-  //  Teuchos::RCP<MPCDelegateEWC> surf_ewc_;
+  Teuchos::RCP<MPCDelegateEWC> surf_ewc_;
 
   // Water delegate
   Teuchos::RCP<MPCDelegateWater> water_;

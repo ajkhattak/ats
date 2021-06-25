@@ -12,32 +12,33 @@
 
 /*!
 
-``PKPhysicalBase`` is a base class providing some functionality for PKs which
+`PKPhysicalBase` is a base class providing some functionality for PKs which
 are defined on a single mesh, and represent a single process model.  Typically
-all leaves of the PK tree will inherit from ``PKPhysicalBase``.
+all leaves of the PK tree will inherit from `PKPhysicalBase`.
 
-* `"domain name`" ``[string]`` e.g. `"surface`".
+.. _pk-physical-default-spec:
+.. admonition:: pk-physical-default-spec
 
-  Domains and meshes are 1-to-1, and the empty string refers to the main domain or mesh.  PKs defined on other domains must specify which domain/mesh they refer to.
+    * `"domain name`" ``[string]`` Name from the Mesh_ list on which this PK is defined.
 
-* `"primary variable key`" ``[string]`` Sets the primary variable.
+    * `"primary variable key`" ``[string]`` The primary variable
+      e.g. `"pressure`", or `"temperature`".  Most PKs supply sane defaults.
 
-  The primary variable associated with this PK, i.e. `"pressure`", `"temperature`", `"surface_pressure`", etc.
+    * `"initial condition`" ``[initial-conditions-spec]``  See InitialConditions_.
 
-* `"initial condition`" ``[initial-conditions-spec]``  See InitialConditions_.
+    * `"max valid change`" ``[double]`` **-1** Sets a limiter on what is a
+      valid change in a single timestep.  Changes larger than this are declared
+      invalid and the timestep shrinks.  By default, any change is valid.
+      Units are the same as the primary variable.
 
+    INCLUDES:
 
-   Indicates that the primary variable field has both CELL and FACE objects, and the FACE values are calculated as the average of the neighboring cells.
-
-
-NOTE: ``PKPhysicalBase (v)-->`` PKDefaultBase_
+    - ``[pk-spec]`` This *is a* PK_.
+    - ``[debugger-spec]`` Uses a Debugger_
 
 */
-
 #ifndef ATS_PK_PHYSICAL_BASE_HH_
 #define ATS_PK_PHYSICAL_BASE_HH_
-
-
 
 #include "Teuchos_ParameterList.hpp"
 #include "TreeVector.hh"
@@ -47,7 +48,6 @@ NOTE: ``PKPhysicalBase (v)-->`` PKDefaultBase_
 #include "primary_variable_field_evaluator.hh"
 #include "PK.hh"
 #include "PK_Physical.hh"
-
 
 namespace Amanzi {
 
@@ -62,35 +62,16 @@ class PK_Physical_Default : public PK_Physical {
   // Virtual destructor
   virtual ~PK_Physical_Default() = default;
 
-  // Default implementations of PK methods.
-  // -- transfer operators -- pointer copies only
-  virtual void State_to_Solution(const Teuchos::RCP<State>& S,
-                                 TreeVector& soln);
-  virtual void Solution_to_State(TreeVector& soln,
-                                 const Teuchos::RCP<State>& S);
-  virtual void Solution_to_State(const TreeVector& soln,
-                                 const Teuchos::RCP<State>& S);
-
-
-  // new virtual set_states() to also get the primary field evaulator.
-  virtual void set_states(const Teuchos::RCP<State>& S,
-          const Teuchos::RCP<State>& S_inter,
-          const Teuchos::RCP<State>& S_next);
-
   virtual bool ValidStep();
 
   // Tag the primary variable as changed in the DAG
   virtual void ChangedSolutionPK(const Teuchos::Ptr<State>& S);
-  
+
   // -- setup
   virtual void Setup(const Teuchos::Ptr<State>& S);
 
   // -- initialize
   virtual void Initialize(const Teuchos::Ptr<State>& S);
-
- protected: // methods
-
-  void DeriveFaceValuesFromCellValues_(const Teuchos::Ptr<CompositeVector>& cv);
 
  protected: // data
 

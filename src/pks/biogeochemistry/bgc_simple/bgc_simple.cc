@@ -66,7 +66,6 @@ void BGCSimple::Setup(const Teuchos::Ptr<State>& S) {
 
   // my mesh is the subsurface mesh, but we need the surface mesh, index by column, as well
   mesh_surf_ = S->GetMesh("surface");
-  soil_part_name_ = plist_->get<std::string>("soil partition name");
 
   // Create the additional, non-managed data structures
   int nPools = plist_->get<int>("number of carbon pools", 7);
@@ -97,7 +96,7 @@ void BGCSimple::Setup(const Teuchos::Ptr<State>& S) {
   pfts_.resize(ncols);
   for (unsigned int col=0; col!=ncols; ++col) {
     int f = mesh_surf_->entity_get_parent(AmanziMesh::CELL, col);
-    ColIterator col_iter(*mesh_, f);
+    auto& col_iter = mesh_->cells_of_column(col);
     std::size_t ncol_cells = col_iter.size();
 
     // unclear which this should be:
@@ -128,8 +127,10 @@ void BGCSimple::Setup(const Teuchos::Ptr<State>& S) {
   soil_carbon_pools_.resize(ncols);
   for (unsigned int col=0; col!=ncols; ++col) {
     soil_carbon_pools_[col].resize(ncells_per_col_);
-    ColIterator col_iter(*mesh_, mesh_surf_->entity_get_parent(AmanziMesh::CELL, col), ncells_per_col_);
 
+    auto& col_iter = mesh_->cells_of_column(col);
+    ncells_per_col_ = col_iter.size();
+        
     for (std::size_t i=0; i!=col_iter.size(); ++i) {
       // col_iter[i] = cell id, mp[cell_id] = index into partition list, sc_params_[index] = correct params
       soil_carbon_pools_[col][i] = Teuchos::rcp(new SoilCarbon(sc_params_[mp[col_iter[i]]]));
@@ -219,7 +220,7 @@ void BGCSimple::Setup(const Teuchos::Ptr<State>& S) {
       ->AddComponent("cell", AmanziMesh::CELL, 1);
 
   // parameters
-  lat_ = plist_->get<double>("latitude [degrees]", 60.);
+  lat_ = plist_->get<double>("latitude [degrees]");
   wind_speed_ref_ht_ = plist_->get<double>("wind speed reference height [m]", 2.0);
   cryoturbation_coef_ = plist_->get<double>("cryoturbation mixing coefficient [cm^2/yr]", 5.0);
   cryoturbation_coef_ /= 365.25e4; // convert to m^2/day
@@ -378,7 +379,7 @@ bool BGCSimple::AdvanceStep(double t_old, double t_new, bool reinit) {
       ->ViewComponent("cell",false);
   Epetra_MultiVector& lai = *S_next_->GetFieldData("surface-leaf_area_index", name_)
       ->ViewComponent("cell",false);
-  Epetra_MultiVector& veg_total_transpiration = *S_next_->GetFieldData("surface-veg_total_transpiration", name_)
+  Epetra_MultiVector& total_transpiration = *S_next_->GetFieldData("surface-veg_total_transpiration", name_)
       ->ViewComponent("cell",false);
 
   S_next_->GetFieldEvaluator("temperature")->HasFieldChanged(S_next_.ptr(), name_);
@@ -432,8 +433,6 @@ bool BGCSimple::AdvanceStep(double t_old, double t_new, bool reinit) {
   Epetra_SerialDenseVector trans_c(ncells_per_col_);
   double sw_c(0.);
 
-  // Grab the mesh partition to get soil properties
-  Teuchos::RCP<const Functions::MeshPartition> mp = S_next_->GetMeshPartition(soil_part_name_);
   total_lai.PutScalar(0.);
 
   // loop over columns and apply the model
@@ -444,7 +443,9 @@ bool BGCSimple::AdvanceStep(double t_old, double t_new, bool reinit) {
     ColDepthDz_(col, depth_c.ptr(), dz_c.ptr());
 
     // copy over the soil carbon arrays
-    ColIterator col_iter(*mesh_, mesh_surf_->entity_get_parent(AmanziMesh::CELL, col), ncells_per_col_);
+    auto& col_iter = mesh_->cells_of_column(col);
+    ncells_per_col_ = col_iter.size();
+    
     // -- serious cache thrash... --etc
     for (std::size_t i=0; i!=col_iter.size(); ++i) {
       AmanziGeometry::Point centroid = mesh_->cell_centroid(col_iter[i]);
@@ -483,9 +484,7 @@ bool BGCSimple::AdvanceStep(double t_old, double t_new, bool reinit) {
 
 
       // and pull in the transpiration, converting to mol/m^3/s, as a sink
-      trans[0][col_iter[i]] = -trans_c[i]/ .01801528;
-      //      std::cout << std::scientific;
-      //      std::cout << "Transpiration at " << col_iter[i] << "," << i << " = " << trans[0][col_iter[i]] << std::endl;
+      trans[0][col_iter[i]] = trans_c[i] / .01801528;
       sw[0][col] = sw_c;
     }
 
@@ -495,8 +494,7 @@ bool BGCSimple::AdvanceStep(double t_old, double t_new, bool reinit) {
       csink[lcv_pft][col] = pfts_[col][lcv_pft]->CSinkLimit;
       lai[lcv_pft][col] = pfts_[col][lcv_pft]->lai;
 
-      veg_total_transpiration[lcv_pft][col] = pfts_[col][lcv_pft]->ET / 0.01801528;
-
+      total_transpiration[lcv_pft][col] = pfts_[col][lcv_pft]->ET / 0.01801528;
       total_lai[0][col] += pfts_[col][lcv_pft]->lai;
     }
 
@@ -517,19 +515,30 @@ void BGCSimple::FieldToColumn_(AmanziMesh::Entity_ID col, const Epetra_Vector& v
     col_vec = Teuchos::ptr(new Epetra_SerialDenseVector(ncells_per_col_));
   }
 
-  ColIterator col_iter(*mesh_, mesh_surf_->entity_get_parent(AmanziMesh::CELL, col), ncells_per_col_);
+  auto& col_iter = mesh_->cells_of_column(col);
   for (std::size_t i=0; i!=col_iter.size(); ++i) {
     (*col_vec)[i] = vec[col_iter[i]];
   }
 }
 
+// helper function for pushing field to column
+void BGCSimple::FieldToColumn_(AmanziMesh::Entity_ID col, const Epetra_Vector& vec,
+                               double* col_vec, int ncol) {
+  auto& col_iter = mesh_->cells_of_column(col);
+  for (std::size_t i=0; i!=col_iter.size(); ++i) {
+    col_vec[i] = vec[col_iter[i]];
+  }
+}
+
+  
 // helper function for collecting column dz and depth
 void BGCSimple::ColDepthDz_(AmanziMesh::Entity_ID col,
                             Teuchos::Ptr<Epetra_SerialDenseVector> depth,
                             Teuchos::Ptr<Epetra_SerialDenseVector> dz) {
   AmanziMesh::Entity_ID f_above = mesh_surf_->entity_get_parent(AmanziMesh::CELL, col);
-  ColIterator col_iter(*mesh_, f_above, ncells_per_col_);
-
+  auto& col_iter = mesh_->cells_of_column(col);
+  ncells_per_col_ = col_iter.size();
+  
   AmanziGeometry::Point surf_centroid = mesh_->face_centroid(f_above);
   AmanziGeometry::Point neg_z(3);
   neg_z.set(0.,0.,-1);

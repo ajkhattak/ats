@@ -1,20 +1,48 @@
-/* -*-  mode: c++; indent-tabs-mode: nil -*- */
+/*
+  ATS is released under the three-clause BSD License.
+  The terms of use and "as is" disclaimer for this license are
+  provided in the top-level COPYRIGHT file.
 
-/* -------------------------------------------------------------------------
-ATS
+  Authors: Ethan Coon (ecoon@lanl.gov)
+*/
+//! A simple conservation ODE.
 
-License: see $ATS_DIR/COPYRIGHT
-Author: Ethan Coon
+/*!
 
-A generalized surface balance model using Crank-Nicholson time integration
-for a system of ODEs, i.e.:
+This is a very simple vector of ODEs, useful in balance equations, where the
+time derivative of a conserved quantity is determined by a bunch of sources and
+sinks.
 
-d theta(u)
----------  = Qin - Qout
-  dt 
+.. math::
+    \frac{\partial \Phi }{\partial t} = \sum_i Q_i
 
+.. _balance-pk-spec:
+.. admonition:: balance-pk-spec
 
- ------------------------------------------------------------------------- */
+    * `"primary variable key`" ``[string]`` The primary variable associated with
+      this PK.  Note there is no default -- this must be provided by the user.
+
+    * `"conserved quantity key`" ``[string]`` The conserved quantity :math:`\Phi`
+
+    * `"source key`" ``[string]`` **DOMAIN-source_sink** Units are in conserved
+      quantity per second per cell volume.
+
+    * `"time discretization theta`" ``[double]`` **1.0** :math:`\theta` in a
+      Crank-Nicholson time integration scheme.  1.0 implies fully implicit, 0.0
+      implies explicit, 0.5 implies C-N.
+
+    * `"modify predictor positivity preserving`" ``[bool]`` **false** If true,
+      predictors are modified to ensure that the conserved quantity is always > 0.
+
+    * `"absolute error tolerance`" ``[double]`` **550.0** a_tol in the standard
+      error norm calculation.  Defaults to a small amount of water.  Units are
+      the same as the conserved quantity.
+
+    INCLUDES:
+
+    - ``[pk-physical-bdf-default-spec]``
+
+*/
 
 #ifndef PK_SURFACE_BALANCE_BASE_HH_
 #define PK_SURFACE_BALANCE_BASE_HH_
@@ -58,7 +86,6 @@ class SurfaceBalanceBase : public PK_PhysicalBDF_Default {
 
  protected:
 
-  Key layer_;
   bool conserved_quantity_;
   bool is_source_, is_source_differentiable_, source_finite_difference_;
   Key source_key_;
@@ -68,10 +95,8 @@ class SurfaceBalanceBase : public PK_PhysicalBDF_Default {
 
   bool modify_predictor_positivity_preserving_;
 
-  bool precon_used_;
   Teuchos::RCP<Operators::PDE_Accumulation> preconditioner_acc_;
-  Teuchos::RCP<Operators::Operator> lin_solver_;
-  
+
  private:
   // factory registration
   static RegisteredPKFactory<SurfaceBalanceBase> reg_;

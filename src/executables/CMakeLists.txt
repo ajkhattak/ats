@@ -13,7 +13,7 @@
 #   add_definitions("-DMSTK_2_21rc1_OR_NEWER")
 # endif ()
 
-#project(EXECUTABLE)
+project(EXECUTABLE)
 
 #
 #  ATS
@@ -26,28 +26,26 @@ include_directories(${MSTK_SOURCE_DIR})
 include_directories(${CHEMPK_SOURCE_DIR})
 include_directories(${MPC_TREE_SOURCE_DIR})
 include_directories(${DBG_SOURCE_DIR})
+include_directories(${TRANSPORT_SOURCE_DIR})
+get_property(CHEM_INCLUDES_DIR GLOBAL PROPERTY CHEM_INCLUDES_DIR)
+include_directories(${CHEM_INCLUDES_DIR})
 
-#include_directories(${ATS_SOURCE_DIR}/constitutive_relations)
-#include_directories(${ATS_SOURCE_DIR}/constitutive_relations/eos)
-#include_directories(${ATS_SOURCE_DIR}/constitutive_relations/surface_subsurface_fluxes)
-#include_directories(${ATS_SOURCE_DIR}/constitutive_relations/generic_evaluators)
-include_directories(${ATS_SOURCE_DIR}/pks)
-#include_directories(${ATS_SOURCE_DIR}/pks/mpc)
-#include_directories(${ATS_SOURCE_DIR}/pks/energy)
-#include_directories(${ATS_SOURCE_DIR}/pks/flow)
-#include_directories(${ATS_SOURCE_DIR}/pks/deformation)
-#include_directories(${ATS_SOURCE_DIR}/pks/transport)
-include_directories(${ATS_SOURCE_DIR}/operators/upwinding)
-include_directories(${ATS_SOURCE_DIR}/operators/advection)
-include_directories(${ATS_SOURCE_DIR}/operators/deformation)
+#include_directories(${ATS_SOURCE_DIR}/src/constitutive_relations)
+#include_directories(${ATS_SOURCE_DIR}/src/constitutive_relations/eos)
+#include_directories(${ATS_SOURCE_DIR}/src/constitutive_relations/surface_subsurface_fluxes)
+#include_directories(${ATS_SOURCE_DIR}/src/constitutive_relations/generic_evaluators)
+include_directories(${ATS_SOURCE_DIR}/src/pks)
+#include_directories(${ATS_SOURCE_DIR}/src/pks/mpc)
+#include_directories(${ATS_SOURCE_DIR}/src/pks/energy)
+#include_directories(${ATS_SOURCE_DIR}/src/pks/flow)
+#include_directories(${ATS_SOURCE_DIR}/src/pks/deformation)
+#include_directories(${ATS_SOURCE_DIR}/src/pks/transport)
+include_directories(${ATS_SOURCE_DIR}/src/operators/upwinding)
+include_directories(${ATS_SOURCE_DIR}/src/operators/advection)
+include_directories(${ATS_SOURCE_DIR}/src/operators/deformation)
 
-if (ENABLE_FATES)
-  link_directories(/nh/u/dasvyat/Coastal/ats-fates-new/install/lib/)
-  link_directories(/nh/u/dasvyat/Coastal/ParallelIO/install/lib/)
-  link_directories(/nh/u/dasvyat/Coastal/pnetcdf-1.11.2/install/lib)
-  set (VEG_LIB pk_veg)
-endif()
-
+include_directories(${AMANZI_BINARY_DIR}) # required to pick up amanzi_version.hh
+include_directories(${ATS_BINARY_DIR})
 
 include_evaluators_directories(LISTNAME REGISTER_AMANZI_STATE_EVALUATORS_INCLUDES)
 include_evaluators_directories(LISTNAME ATS_RELATIONS_REG_INCLUDES)
@@ -66,7 +64,6 @@ set(ats_src_files
   coordinator.cc
   ats_mesh_factory.cc
   simulation_driver.cc
-  main.cc
   )
 
 set(ats_inc_files
@@ -78,6 +75,10 @@ set(ats_inc_files
 set(amanzi_link_libs
   operators
   pks
+  geochemrxns
+  geochembase
+  geochemutil
+  geochemsolvers
   state
   whetstone
   time_integration
@@ -90,14 +91,9 @@ set(amanzi_link_libs
   functions
   geometry
   mesh_factory
-  interface
   output
   mstk_mesh
   mesh_logical
-  geochemrxns
-  geochembase
-  geochemutil
-  geochemsolvers
   chemistry_pk
   mpc_tree
   transport
@@ -125,12 +121,12 @@ set(ats_link_libs
 # note, we can be inclusive here, because if they aren't enabled,
 # these won't be defined and will result in empty strings.
 set(tpl_link_libs
+  ${ALQUIMIA_LIBRARIES}
+  ${PFLOTRAN_LIBRARIES}
   ${Teuchos_LIBRARIES}
   ${Epetra_LIBRARIES}
   ${Boost_LIBRARIES}
   ${PETSC_LIBRARIES}
-  ${ALQUIMIA_LIBRARIES}
-  ${PFLOTRAN_LIBRARIES}
   ${MSTK_LIBRARIES}
   ${SILO_LIBRARIES}
   ${HYPRE_LIBRARIES}
@@ -138,14 +134,42 @@ set(tpl_link_libs
   ${CLM_LIBRARIES}
   )
 
-if (ENABLE_FATES)
-  set(fates_link_libs -lfates -lparteh -lshared  -lpiof -lpioc -lpnetcdf -lgptl)
-#  link_directories(ats /nh/u/dasvyat/Coastal/ats-fates-new/install/lib/)
+add_amanzi_library(ats_executable
+  SOURCE ${ats_src_files}
+  HEADERS ${ats_inc_files}
+  LINK_LIBS ${amanzi_link_libs} ${tpl_link_libs})
+if (APPLE AND BUILD_SHARED_LIBS)
+  set_target_properties(ats_executable PROPERTIES LINK_FLAGS "-Wl,-undefined,dynamic_lookup")
+endif()			  
+
+if (BUILD_TESTS)
+  # Add UnitTest includes
+  include_directories(${UnitTest_INCLUDE_DIRS})
+  include_directories(${EXECUTABLE_SOURCE_DIR})
+
+  # Copy test subdirectory for out of source builds
+  if (NOT ("${EXECUTABLE_SOURCE_DIR}" STREQUAL "${EXECUTABLE_BINARY_DIR}"))
+    file(GLOB DataFiles "${EXECUTABLE_SOURCE_DIR}/test/*.xml"
+      "${EXECUTABLE_SOURCE_DIR}/test/*.exo"
+      "${EXECUTABLE_SOURCE_DIR}/test/*.h5"
+      "${EXECUTABLE_SOURCE_DIR}/test/*.bin")
+    file(COPY ${DataFiles} DESTINATION ${EXECUTABLE_BINARY_DIR}/test/)
+  endif()
+
+  add_amanzi_test(executable_mesh_factory executable_mesh_factory
+           KIND int
+           SOURCE test/Main.cc test/executable_mesh_factory.cc
+           LINK_LIBS ats_executable  ${UnitTest_LIBRARIES} ${NOX_LIBRARIES} ${HDF5_LIBRARIES})
+
+  add_amanzi_test(executable_mesh_factory_np2 executable_mesh_factory NPROCS 2 KIND uint)
+  add_amanzi_test(executable_mesh_factory_np4 executable_mesh_factory NPROCS 2 KIND uint)
+
+
 endif()
 
-
 add_amanzi_executable(ats
-  SOURCE ${ats_src_files}
-  LINK_LIBS ${fates_link_libs} ${tpl_link_libs} ${ats_link_libs} ${amanzi_link_libs} 
+  SOURCE main.cc
+  LINK_LIBS ats_executable ${fates_link_libs} ${tpl_link_libs} ${ats_link_libs} ${amanzi_link_libs} 
   OUTPUT_NAME ats
   OUTPUT_DIRECTORY ${ATS_BINARY_DIR})
+

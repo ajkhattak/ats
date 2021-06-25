@@ -1,32 +1,34 @@
-/* -*-  mode: c++; indent-tabs-mode: nil -*- */
+/*
+  ATS is released under the three-clause BSD License.
+  The terms of use and "as is" disclaimer for this license are
+  provided in the top-level COPYRIGHT file.
 
-/* -------------------------------------------------------------------------
-ATS
+  Authors: Ethan Coon (ecoon@lanl.gov)
+*/
+//! Three-phase thermal conductivity based on paper by Peters-Lidard.
 
-License: see $ATS_DIR/COPYRIGHT
-Author: Ethan Coon
+/*!
 
-Simple model of three-phase thermal conductivity, based upon:
+A three-phase thermal conductivity, based upon:
 
 - Interpolation between saturated and dry conductivities via a Kersten number.
 - Power-law Kersten number.
+- Empirical relationship for frozen soil based on Peters-Lidard
 
-See ATS process model documentation's permafrost model for details.
+See Atchley et al GMD 2015 Supplementary Material for equations.
 
-Usage:
+.. _thermal-conductivity-threephase-wetdry-spec:
+.. admonition:: thermal-conductivity-threephase-wetdry-spec
 
-  <ParameterList name="Thermal Conductivity Model">
-    <Parameter name="Thermal Conductivity Type" type="string" value="three-phase wet/dry"/>
+    * `"thermal conductivity, saturated (unfrozen) [W m^-1 K^-1]`" ``[double]`` Thermal conductivity of fully saturated, unfrozen bulk soil.
+    * `"thermal conductivity, dry [W m^-1 K^-1]`" ``[double]`` Thermal conductivity of fully dried bulk soil.
+    * `"unsaturated alpha unfrozen [-]`" ``[double]`` Interpolating exponent
+    * `"unsaturated alpha frozen [-]`" ``[double]`` Interpolating exponent
+    * `"unsaturated alpha frozen [-]`" ``[double]`` Interpolating exponent
+    * `"saturated beta frozen [-]`" ``[double]`` **1.0** Interpolating exponent
+    * `"epsilon`" ``[double]`` **1e-10** Epsilon to keep saturations bounded away from 0.
 
-    <Parameter name="thermal conductivity, wet" type="double" value=""/>
-    <Parameter name="thermal conductivity, dry" type="double" value=""/>
-
-    <Parameter name="epsilon" type="double" value="1.e-10"/>
-    <Parameter name="unsaturated alpha" type="double" value="1.0"/>
-  </ParameterList>
-
-Units: ????
-------------------------------------------------------------------------- */
+*/
 
 #ifndef PK_ENERGY_RELATIONS_THERMAL_CONDUCTIVITY_THREEPHASE_WETDRY_HH_
 #define PK_ENERGY_RELATIONS_THERMAL_CONDUCTIVITY_THREEPHASE_WETDRY_HH_
@@ -60,8 +62,9 @@ private:
   double alpha_u_;
   double k_sat_u_;
   double k_dry_;
-  double beta_sat_f_; 
-private:
+  double beta_sat_f_;
+
+ private:
   static Utils::RegisteredFactory<ThermalConductivityThreePhase,
                                   ThermalConductivityThreePhaseWetDry> factory_;
 
